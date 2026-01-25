@@ -1,0 +1,35 @@
+const mongoose = require('mongoose');
+
+const groupSchema = new mongoose.Schema({
+  groupName: { type: String, required: true, trim: true },
+  groupCode: { type: String, required: true, unique: true, trim: true },
+  branchName: { type: String, required: true, trim: true },
+  members: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Member' }],
+  leader: { type: mongoose.Schema.Types.ObjectId, ref: 'Member' },
+  secretary: { type: mongoose.Schema.Types.ObjectId, ref: 'Member' },
+  treasurer: { type: mongoose.Schema.Types.ObjectId, ref: 'Member' },
+  loanOfficer: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  meetingDay: { type: String },
+  meetingTime: { type: String },
+  community: { type: String, trim: true },
+  totalGroupCount: { type: Number, default: 0 },
+  presidentName: { type: String, trim: true },
+  presidentNumber: { type: String, trim: true },
+  securityName: { type: String, trim: true },
+  securityNumber: { type: String, trim: true },
+  treasurerName: { type: String, trim: true },
+  treasurerNumber: { type: String, trim: true },
+  police1Name: { type: String, trim: true },
+  police1Number: { type: String, trim: true },
+  police2Name: { type: String, trim: true },
+  police2Number: { type: String, trim: true },
+  status: { type: String, enum: ['Active', 'Inactive', 'Pending'], default: 'Pending' },
+  groupTotalLoanAmount: { type: Number, default: 0 },
+  totalLoans: { type: Number, default: 0 },
+  socialfundamount: { type: Number, default: 0 },
+  totalsocialfund: { type: Number, default: 0 },
+  groupsavings: { type: Number, default: 0 },
+  membersavingsshare: { type: Number, default: 0 },
+}, { timestamps: true });
+
+module.exports = mongoose.model('Group', groupSchema);
