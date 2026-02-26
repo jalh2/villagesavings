@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const Expense = require('../models/Expense');
 const Group = require('../models/Group');
 const Member = require('../models/Member');
+const { resolveSingleGroup } = require('../utils/singleGroup');
 
 exports.createExpense = async (req, res) => {
   try {
@@ -17,22 +18,19 @@ exports.createExpense = async (req, res) => {
       notes,
     } = req.body;
 
-    if (!group || !currency) {
-      return res.status(400).json({ message: 'group and currency are required' });
-    }
-
-    if (!mongoose.isValidObjectId(group)) {
-      return res.status(400).json({ message: 'Invalid group id' });
+    if (!currency) {
+      return res.status(400).json({ message: 'currency is required' });
     }
 
     if (member && !mongoose.isValidObjectId(member)) {
       return res.status(400).json({ message: 'Invalid member id' });
     }
 
-    const groupDoc = await Group.findById(group).select('_id meetingFineAmount');
-    if (!groupDoc) {
-      return res.status(404).json({ message: 'Group not found' });
+    const resolved = await resolveSingleGroup(group, '_id meetingFineAmount');
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ message: resolved.error.message });
     }
+    const groupDoc = resolved.group;
 
     let memberDoc = null;
     if (member) {
@@ -40,7 +38,7 @@ exports.createExpense = async (req, res) => {
       if (!memberDoc) {
         return res.status(404).json({ message: 'Member not found' });
       }
-      if (String(memberDoc.group) !== String(group)) {
+      if (String(memberDoc.group) !== String(groupDoc._id)) {
         return res.status(400).json({ message: 'Member does not belong to this group' });
       }
     }
@@ -55,7 +53,7 @@ exports.createExpense = async (req, res) => {
     }
 
     const expense = await Expense.create({
-      group,
+      group: groupDoc._id,
       member: member || undefined,
       memberName: memberName || memberDoc?.memberName,
       type: resolvedType,
@@ -70,7 +68,7 @@ exports.createExpense = async (req, res) => {
       ? { totalFines: amountNum }
       : { totalExpenses: amountNum };
 
-    await Group.findByIdAndUpdate(group, { $inc: groupInc });
+    await Group.findByIdAndUpdate(groupDoc._id, { $inc: groupInc });
 
     return res.status(201).json(expense);
   } catch (error) {
@@ -82,8 +80,14 @@ exports.createExpense = async (req, res) => {
 exports.getExpenses = async (req, res) => {
   try {
     const { group, member, type } = req.query;
+
+    const resolved = await resolveSingleGroup(group, '_id');
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ message: resolved.error.message });
+    }
+
     const filter = {};
-    if (group) filter.group = group;
+    filter.group = resolved.group._id;
     if (member) filter.member = member;
     if (type) filter.type = type;
 
@@ -111,6 +115,11 @@ exports.getExpenseById = async (req, res) => {
       .populate('group', 'groupName groupCode branchName');
 
     if (!expense) {
+      return res.status(404).json({ message: 'Expense record not found' });
+    }
+
+    const resolved = await resolveSingleGroup(String(expense.group?._id || ''), '_id');
+    if (resolved.error) {
       return res.status(404).json({ message: 'Expense record not found' });
     }
 

@@ -1,27 +1,33 @@
 const mongoose = require('mongoose');
 const Distribution = require('../models/Distribution');
 const Loan = require('../models/Loan');
-const Group = require('../models/Group');
 const Member = require('../models/Member');
+const { resolveSingleGroup } = require('../utils/singleGroup');
 
 exports.createDistribution = async (req, res) => {
   try {
     const { loan, group, member, memberName, amount, currency, date, notes } = req.body;
 
-    if (!loan || !group || !amount || !currency) {
-      return res.status(400).json({ message: 'loan, group, amount, and currency are required' });
+    if (!loan || !amount || !currency) {
+      return res.status(400).json({ message: 'loan, amount, and currency are required' });
     }
 
-    if (!mongoose.isValidObjectId(loan) || !mongoose.isValidObjectId(group)) {
-      return res.status(400).json({ message: 'Invalid loan or group id' });
+    if (!mongoose.isValidObjectId(loan)) {
+      return res.status(400).json({ message: 'Invalid loan id' });
     }
+
+    const resolved = await resolveSingleGroup(group, '_id');
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ message: resolved.error.message });
+    }
+    const groupDoc = resolved.group;
 
     const loanDoc = await Loan.findById(loan).select('group currency');
     if (!loanDoc) {
       return res.status(404).json({ message: 'Loan not found' });
     }
 
-    if (String(loanDoc.group) !== String(group)) {
+    if (String(loanDoc.group) !== String(groupDoc._id)) {
       return res.status(400).json({ message: 'Loan does not belong to this group' });
     }
 
@@ -37,19 +43,14 @@ exports.createDistribution = async (req, res) => {
       if (!memberDoc) {
         return res.status(404).json({ message: 'Member not found' });
       }
-      if (String(memberDoc.group) !== String(group)) {
+      if (String(memberDoc.group) !== String(groupDoc._id)) {
         return res.status(400).json({ message: 'Member does not belong to this group' });
       }
     }
 
-    const groupDoc = await Group.findById(group).select('_id');
-    if (!groupDoc) {
-      return res.status(404).json({ message: 'Group not found' });
-    }
-
     const distribution = await Distribution.create({
       loan,
-      group,
+      group: groupDoc._id,
       member: member || undefined,
       memberName,
       amount,
@@ -68,9 +69,15 @@ exports.createDistribution = async (req, res) => {
 exports.getDistributions = async (req, res) => {
   try {
     const { loan, group, member } = req.query;
+
+    const resolved = await resolveSingleGroup(group, '_id');
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ message: resolved.error.message });
+    }
+
     const filter = {};
+    filter.group = resolved.group._id;
     if (loan) filter.loan = loan;
-    if (group) filter.group = group;
     if (member) filter.member = member;
 
     const distributions = await Distribution.find(filter)
@@ -98,6 +105,11 @@ exports.getDistributionById = async (req, res) => {
       .populate('group', 'groupName groupCode branchName')
       .populate('loan', 'loanAmount currency status');
     if (!distribution) {
+      return res.status(404).json({ message: 'Distribution not found' });
+    }
+
+    const resolved = await resolveSingleGroup(String(distribution.group?._id || ''), '_id');
+    if (resolved.error) {
       return res.status(404).json({ message: 'Distribution not found' });
     }
 

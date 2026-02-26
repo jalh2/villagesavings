@@ -1,18 +1,16 @@
 const mongoose = require('mongoose');
 const Member = require('../models/Member');
 const Group = require('../models/Group');
+const { resolveSingleGroup } = require('../utils/singleGroup');
 
 exports.createMember = async (req, res) => {
   try {
-    const groupId = req.params.groupId || req.body.group;
-    if (!mongoose.isValidObjectId(groupId)) {
-      return res.status(400).json({ message: 'Invalid group id' });
+    const requestedGroupId = req.params.groupId || req.body.group;
+    const resolved = await resolveSingleGroup(requestedGroupId, '_id members');
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ message: resolved.error.message });
     }
-
-    const group = await Group.findById(groupId);
-    if (!group) {
-      return res.status(404).json({ message: 'Group not found' });
-    }
+    const group = resolved.group;
 
     const {
       memberName,
@@ -38,7 +36,7 @@ exports.createMember = async (req, res) => {
       nationalId,
       memberSignature,
       attendance,
-      group: groupId,
+      group: group._id,
     });
 
     if (!Array.isArray(group.members)) {
@@ -56,12 +54,13 @@ exports.createMember = async (req, res) => {
 
 exports.getMembersByGroup = async (req, res) => {
   try {
-    const { groupId } = req.params;
-    if (!mongoose.isValidObjectId(groupId)) {
-      return res.status(400).json({ message: 'Invalid group id' });
+    const { groupId: requestedGroupId } = req.params;
+    const resolved = await resolveSingleGroup(requestedGroupId, '_id');
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ message: resolved.error.message });
     }
 
-    const members = await Member.find({ group: groupId });
+    const members = await Member.find({ group: resolved.group._id });
     return res.json(members);
   } catch (error) {
     console.error('[MEMBERS] getMembersByGroup error', error);
@@ -81,6 +80,11 @@ exports.getMemberById = async (req, res) => {
       return res.status(404).json({ message: 'Member not found' });
     }
 
+    const resolved = await resolveSingleGroup(String(member.group?._id || ''), '_id');
+    if (resolved.error) {
+      return res.status(404).json({ message: 'Member not found' });
+    }
+
     return res.json(member);
   } catch (error) {
     console.error('[MEMBERS] getMemberById error', error);
@@ -95,13 +99,20 @@ exports.updateMember = async (req, res) => {
       return res.status(400).json({ message: 'Invalid member id' });
     }
 
+    const memberDoc = await Member.findById(id).select('_id group');
+    if (!memberDoc) {
+      return res.status(404).json({ message: 'Member not found' });
+    }
+
+    const resolved = await resolveSingleGroup(String(memberDoc.group), '_id');
+    if (resolved.error) {
+      return res.status(404).json({ message: 'Member not found' });
+    }
+
     const update = { ...req.body };
     delete update.group;
 
     const member = await Member.findByIdAndUpdate(id, update, { new: true, runValidators: true });
-    if (!member) {
-      return res.status(404).json({ message: 'Member not found' });
-    }
 
     return res.json(member);
   } catch (error) {
@@ -119,6 +130,11 @@ exports.deleteMember = async (req, res) => {
 
     const member = await Member.findById(id);
     if (!member) {
+      return res.status(404).json({ message: 'Member not found' });
+    }
+
+    const resolved = await resolveSingleGroup(String(member.group), '_id');
+    if (resolved.error) {
       return res.status(404).json({ message: 'Member not found' });
     }
 

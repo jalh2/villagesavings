@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const Loan = require('../models/Loan');
-const Group = require('../models/Group');
 const Member = require('../models/Member');
+const { resolveSingleGroup } = require('../utils/singleGroup');
 
 const toWeeks = (n, unit) => {
   const num = Number(n || 0);
@@ -23,22 +23,22 @@ exports.getLoanEligibility = async (req, res) => {
   try {
     const { group, client, loanAmount, interestRate } = req.query;
 
-    if (!group || !client) {
-      return res.status(400).json({ message: 'group and client are required' });
+    if (!client) {
+      return res.status(400).json({ message: 'client is required' });
     }
 
-    if (!mongoose.isValidObjectId(group) || !mongoose.isValidObjectId(client)) {
-      return res.status(400).json({ message: 'Invalid group or client id' });
+    if (!mongoose.isValidObjectId(client)) {
+      return res.status(400).json({ message: 'Invalid client id' });
     }
 
-    const [groupDoc, memberDoc] = await Promise.all([
-      Group.findById(group).select('_id savingsamount'),
-      Member.findById(client).select('_id group memberName memberNumber savingsTotal totalShares'),
-    ]);
-
-    if (!groupDoc) {
-      return res.status(404).json({ message: 'Group not found' });
+    const resolved = await resolveSingleGroup(group, '_id savingsamount');
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ message: resolved.error.message });
     }
+
+    const groupDoc = resolved.group;
+
+    const memberDoc = await Member.findById(client).select('_id group memberName memberNumber savingsTotal totalShares');
 
     if (!memberDoc) {
       return res.status(404).json({ message: 'Member not found' });
@@ -156,18 +156,19 @@ exports.createLoan = async (req, res) => {
       branchManagerInfo,
     } = req.body;
 
-    if (!group || !client || !branchName || !branchCode || !guarantorName || !guarantorRelationship || !loanAmountInWords || loanDurationNumber == null || !loanDurationUnit || loanAmount == null) {
+    if (!client || !branchName || !branchCode || !guarantorName || !guarantorRelationship || !loanAmountInWords || loanDurationNumber == null || !loanDurationUnit || loanAmount == null) {
       return res.status(400).json({ message: 'Missing required loan fields' });
     }
 
-    if (!mongoose.isValidObjectId(group) || !mongoose.isValidObjectId(client)) {
-      return res.status(400).json({ message: 'Invalid group or client id' });
+    if (!mongoose.isValidObjectId(client)) {
+      return res.status(400).json({ message: 'Invalid client id' });
     }
 
-    const groupDoc = await Group.findById(group);
-    if (!groupDoc) {
-      return res.status(404).json({ message: 'Group not found' });
+    const resolved = await resolveSingleGroup(group, '_id organizationName savingsamount');
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ message: resolved.error.message });
     }
+    const groupDoc = resolved.group;
 
     const memberDoc = await Member.findById(client);
     if (!memberDoc) {
@@ -269,8 +270,14 @@ exports.createLoan = async (req, res) => {
 exports.getAllLoans = async (req, res) => {
   try {
     const { group, client, branchName, branchCode, status, currency } = req.query;
+
+    const resolved = await resolveSingleGroup(group, '_id');
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ message: resolved.error.message });
+    }
+
     const filter = {};
-    if (group) filter.group = group;
+    filter.group = resolved.group._id;
     if (client) filter.client = client;
     if (branchName) filter.branchName = branchName;
     if (branchCode) filter.branchCode = branchCode;
@@ -303,6 +310,11 @@ exports.getLoanById = async (req, res) => {
       return res.status(404).json({ message: 'Loan not found' });
     }
 
+    const resolved = await resolveSingleGroup(String(loan.group?._id || loan.group), '_id');
+    if (resolved.error) {
+      return res.status(404).json({ message: 'Loan not found' });
+    }
+
     return res.json(loan);
   } catch (error) {
     console.error('[LOANS] getLoanById error', error);
@@ -315,6 +327,16 @@ exports.updateLoan = async (req, res) => {
     const { id } = req.params;
     if (!mongoose.isValidObjectId(id)) {
       return res.status(400).json({ message: 'Invalid loan id' });
+    }
+
+    const existingLoan = await Loan.findById(id).select('_id group');
+    if (!existingLoan) {
+      return res.status(404).json({ message: 'Loan not found' });
+    }
+
+    const resolved = await resolveSingleGroup(String(existingLoan.group), '_id');
+    if (resolved.error) {
+      return res.status(404).json({ message: 'Loan not found' });
     }
 
     const update = { ...req.body };
@@ -365,6 +387,11 @@ exports.setLoanStatus = async (req, res) => {
 
     const loan = await Loan.findById(id);
     if (!loan) {
+      return res.status(404).json({ message: 'Loan not found' });
+    }
+
+    const resolved = await resolveSingleGroup(String(loan.group), '_id');
+    if (resolved.error) {
       return res.status(404).json({ message: 'Loan not found' });
     }
 
@@ -422,6 +449,11 @@ exports.addCollection = async (req, res) => {
       return res.status(404).json({ message: 'Loan not found' });
     }
 
+    const resolved = await resolveSingleGroup(String(loan.group), '_id');
+    if (resolved.error) {
+      return res.status(404).json({ message: 'Loan not found' });
+    }
+
     const entry = {
       memberName,
       loanAmount,
@@ -456,8 +488,13 @@ exports.listCollections = async (req, res) => {
       return res.status(400).json({ message: 'Invalid loan id' });
     }
 
-    const loan = await Loan.findById(id).select('collections');
+    const loan = await Loan.findById(id).select('collections group');
     if (!loan) {
+      return res.status(404).json({ message: 'Loan not found' });
+    }
+
+    const resolved = await resolveSingleGroup(String(loan.group), '_id');
+    if (resolved.error) {
       return res.status(404).json({ message: 'Loan not found' });
     }
 

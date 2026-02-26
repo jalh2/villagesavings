@@ -1,6 +1,5 @@
-const mongoose = require('mongoose');
 const Group = require('../models/Group');
-const Member = require('../models/Member');
+const { resolveSingleGroup, SINGLE_GROUP_MODE_MESSAGE } = require('../utils/singleGroup');
 
 const generateGroupCode = async (groupName) => {
   const base = String(groupName || 'GRP')
@@ -78,6 +77,15 @@ exports.createGroup = async (req, res) => {
       savingsamount,
       meetingFineAmount,
     } = req.body;
+
+    const existingGroup = await Group.findOne().select('_id groupName');
+    if (existingGroup) {
+      return res.status(400).json({
+        message: `${SINGLE_GROUP_MODE_MESSAGE} Update the existing group instead of creating another one.`,
+        groupId: existingGroup._id,
+        groupName: existingGroup.groupName,
+      });
+    }
 
     if (!groupName || !branchName) {
       return res.status(400).json({ message: 'groupName and branchName are required' });
@@ -157,13 +165,14 @@ exports.createGroup = async (req, res) => {
 
 exports.getAllGroups = async (req, res) => {
   try {
-    const groups = await Group.find()
+    const group = await Group.findOne()
+      .sort({ createdAt: 1 })
       .populate('members', 'memberName memberNumber')
       .populate('leader', 'memberName memberNumber')
       .populate('secretary', 'memberName memberNumber')
       .populate('treasurer', 'memberName memberNumber')
       .populate('loanOfficer', 'username');
-    return res.json(groups);
+    return res.json(group ? [group] : []);
   } catch (error) {
     console.error('[GROUPS] getAllGroups error', error);
     return res.status(500).json({ message: 'Server error' });
@@ -173,11 +182,13 @@ exports.getAllGroups = async (req, res) => {
 exports.getGroupById = async (req, res) => {
   try {
     const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) {
-      return res.status(400).json({ message: 'Invalid group id' });
+
+    const resolved = await resolveSingleGroup(id, '_id');
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ message: resolved.error.message });
     }
 
-    const group = await Group.findById(id)
+    const group = await Group.findById(resolved.group._id)
       .populate('members')
       .populate('leader', 'memberName memberNumber')
       .populate('secretary', 'memberName memberNumber')
@@ -198,8 +209,10 @@ exports.getGroupById = async (req, res) => {
 exports.updateGroup = async (req, res) => {
   try {
     const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) {
-      return res.status(400).json({ message: 'Invalid group id' });
+
+    const resolved = await resolveSingleGroup(id, '_id');
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ message: resolved.error.message });
     }
 
     const update = { ...req.body };
@@ -227,7 +240,7 @@ exports.updateGroup = async (req, res) => {
     if (update.policeTwoName) update.police2Name = update.policeTwoName;
     if (update.policeTwoNumber) update.police2Number = update.policeTwoNumber;
 
-    const group = await Group.findByIdAndUpdate(id, update, { new: true, runValidators: true });
+    const group = await Group.findByIdAndUpdate(resolved.group._id, update, { new: true, runValidators: true });
     if (!group) {
       return res.status(404).json({ message: 'Group not found' });
     }
@@ -241,20 +254,9 @@ exports.updateGroup = async (req, res) => {
 
 exports.deleteGroup = async (req, res) => {
   try {
-    const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) {
-      return res.status(400).json({ message: 'Invalid group id' });
-    }
-
-    const group = await Group.findById(id);
-    if (!group) {
-      return res.status(404).json({ message: 'Group not found' });
-    }
-
-    await Member.deleteMany({ group: id });
-    await Group.findByIdAndDelete(id);
-
-    return res.json({ message: 'Group removed' });
+    return res.status(400).json({
+      message: `${SINGLE_GROUP_MODE_MESSAGE} Group deletion is disabled.`,
+    });
   } catch (error) {
     console.error('[GROUPS] deleteGroup error', error);
     return res.status(500).json({ message: 'Server error' });

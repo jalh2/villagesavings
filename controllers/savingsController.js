@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const Savings = require('../models/Savings');
 const Group = require('../models/Group');
 const Member = require('../models/Member');
+const { resolveSingleGroup } = require('../utils/singleGroup');
 
 const toNumber = (value, fallback = 0) => {
   const num = Number(value);
@@ -22,28 +23,27 @@ exports.createSavings = async (req, res) => {
       notes,
     } = req.body;
 
-    if (!group || !member || !currency) {
-      return res.status(400).json({ message: 'group, member, and currency are required' });
+    if (!member || !currency) {
+      return res.status(400).json({ message: 'member and currency are required' });
     }
 
-    if (!mongoose.isValidObjectId(group) || !mongoose.isValidObjectId(member)) {
-      return res.status(400).json({ message: 'Invalid group or member id' });
+    if (!mongoose.isValidObjectId(member)) {
+      return res.status(400).json({ message: 'Invalid member id' });
     }
 
-    const [groupDoc, memberDoc] = await Promise.all([
-      Group.findById(group).select('_id savingsamount'),
-      Member.findById(member).select('group memberName savingsTotal totalShares'),
-    ]);
-
-    if (!groupDoc) {
-      return res.status(404).json({ message: 'Group not found' });
+    const resolved = await resolveSingleGroup(group, '_id savingsamount');
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ message: resolved.error.message });
     }
+    const groupDoc = resolved.group;
+
+    const memberDoc = await Member.findById(member).select('group memberName savingsTotal totalShares');
 
     if (!memberDoc) {
       return res.status(404).json({ message: 'Member not found' });
     }
 
-    if (String(memberDoc.group) !== String(group)) {
+    if (String(memberDoc.group) !== String(groupDoc._id)) {
       return res.status(400).json({ message: 'Member does not belong to this group' });
     }
 
@@ -95,7 +95,7 @@ exports.createSavings = async (req, res) => {
     }
 
     const savings = await Savings.create({
-      group,
+      group: groupDoc._id,
       member,
       memberName: memberName || memberDoc.memberName,
       amount: amountNum,
@@ -110,7 +110,7 @@ exports.createSavings = async (req, res) => {
     const amountDelta = direction * amountNum;
     const sharesDelta = direction * sharesNum;
     await Promise.all([
-      Group.findByIdAndUpdate(group, {
+      Group.findByIdAndUpdate(groupDoc._id, {
         $inc: {
           groupsavings: amountDelta,
           totalShares: sharesDelta,
@@ -135,8 +135,14 @@ exports.createSavings = async (req, res) => {
 exports.getSavings = async (req, res) => {
   try {
     const { group, member } = req.query;
+
+    const resolved = await resolveSingleGroup(group, '_id');
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ message: resolved.error.message });
+    }
+
     const filter = {};
-    if (group) filter.group = group;
+    filter.group = resolved.group._id;
     if (member) filter.member = member;
 
     const savings = await Savings.find(filter)
@@ -163,6 +169,11 @@ exports.getSavingsById = async (req, res) => {
       .populate('group', 'groupName groupCode branchName');
 
     if (!savings) {
+      return res.status(404).json({ message: 'Savings record not found' });
+    }
+
+    const resolved = await resolveSingleGroup(String(savings.group?._id || ''), '_id');
+    if (resolved.error) {
       return res.status(404).json({ message: 'Savings record not found' });
     }
 

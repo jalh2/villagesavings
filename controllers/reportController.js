@@ -1,9 +1,9 @@
-const mongoose = require('mongoose');
 const Savings = require('../models/Savings');
 const SocialFund = require('../models/SocialFund');
 const Loan = require('../models/Loan');
 const Expense = require('../models/Expense');
 const Member = require('../models/Member');
+const { resolveSingleGroup } = require('../utils/singleGroup');
 
 const round2 = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 
@@ -130,14 +130,15 @@ exports.getSummaryReport = async (req, res) => {
   try {
     const { group, year } = req.query;
 
-    if (group && !mongoose.isValidObjectId(group)) {
-      return res.status(400).json({ message: 'Invalid group id' });
+    const resolved = await resolveSingleGroup(group, '_id');
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ message: resolved.error.message });
     }
 
-    const summary = await computeSummary({ group, year });
+    const summary = await computeSummary({ group: resolved.group._id, year });
 
     return res.json({
-      group: group || null,
+      group: resolved.group._id,
       ...summary,
       generatedAt: new Date(),
     });
@@ -151,18 +152,15 @@ exports.getYearEndInterestReport = async (req, res) => {
   try {
     const { group, year } = req.query;
 
-    if (!group) {
-      return res.status(400).json({ message: 'group is required for year-end interest report' });
+    const resolved = await resolveSingleGroup(group, '_id');
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ message: resolved.error.message });
     }
 
-    if (!mongoose.isValidObjectId(group)) {
-      return res.status(400).json({ message: 'Invalid group id' });
-    }
-
-    const summary = await computeSummary({ group, year });
+    const summary = await computeSummary({ group: resolved.group._id, year });
 
     return res.json({
-      group,
+      group: resolved.group._id,
       year: summary.year,
       totalInterest: summary.totals.totalInterest,
       totalSharesAtYearEnd: summary.totals.totalSharesAtYearEnd,
