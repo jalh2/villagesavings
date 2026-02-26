@@ -22,6 +22,8 @@ app.use('/api/loans', require('./routes/loanRoutes'));
 app.use('/api/distributions', require('./routes/distributionRoutes'));
 app.use('/api/savings', require('./routes/savingsRoutes'));
 app.use('/api/social-fund', require('./routes/socialFundRoutes'));
+app.use('/api/expenses', require('./routes/expenseRoutes'));
+app.use('/api/reports', require('./routes/reportRoutes'));
 
 app.use(notFound);
 app.use(errorHandler);

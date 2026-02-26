@@ -1,6 +1,7 @@
 const express = require('express');
 const {
   createLoan,
+  getLoanEligibility,
   getAllLoans,
   getLoanById,
   updateLoan,
@@ -10,6 +11,8 @@ const {
 } = require('../controllers/loanController');
 
 const router = express.Router();
+
+router.get('/eligibility', getLoanEligibility);
 
 router.route('/')
   .get(getAllLoans)

@@ -24,6 +24,8 @@ const loanCollectionSchema = new mongoose.Schema({
 const loanSchema = new mongoose.Schema({
   group: { type: mongoose.Schema.Types.ObjectId, ref: 'Group', required: true },
   client: { type: mongoose.Schema.Types.ObjectId, ref: 'Member', required: true },
+  organizationName: { type: String, trim: true },
+  processedByOrganization: { type: Boolean, default: true },
   branchName: { type: String, required: true },
   branchCode: { type: String, required: true },
   meetingTime: { type: String },
@@ -59,14 +61,12 @@ const loanSchema = new mongoose.Schema({
   cancelled: { type: Boolean, default: false },
   cancelledAt: { type: Date },
   cancelledBy: { type: String },
-  loanOfficerName: { type: String, required: true },
   totalRealization: { type: Number },
   collections: [loanCollectionSchema],
   guarantorInfo: signatorySchema,
   treasuryInfo: signatorySchema,
   secretaryInfo: signatorySchema,
   groupHeadInfo: signatorySchema,
-  loanOfficerInfo: signatorySchema,
   branchManagerInfo: signatorySchema,
 }, { timestamps: true });
 

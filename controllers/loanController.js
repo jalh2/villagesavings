@@ -19,6 +19,60 @@ const toWeeks = (n, unit) => {
   }
 };
 
+exports.getLoanEligibility = async (req, res) => {
+  try {
+    const { group, client, loanAmount, interestRate } = req.query;
+
+    if (!group || !client) {
+      return res.status(400).json({ message: 'group and client are required' });
+    }
+
+    if (!mongoose.isValidObjectId(group) || !mongoose.isValidObjectId(client)) {
+      return res.status(400).json({ message: 'Invalid group or client id' });
+    }
+
+    const [groupDoc, memberDoc] = await Promise.all([
+      Group.findById(group).select('_id savingsamount'),
+      Member.findById(client).select('_id group memberName memberNumber savingsTotal totalShares'),
+    ]);
+
+    if (!groupDoc) {
+      return res.status(404).json({ message: 'Group not found' });
+    }
+
+    if (!memberDoc) {
+      return res.status(404).json({ message: 'Member not found' });
+    }
+
+    if (String(memberDoc.group) !== String(groupDoc._id)) {
+      return res.status(400).json({ message: 'Member does not belong to this group' });
+    }
+
+    const eligibility = computeCreditEligibility({
+      memberDoc,
+      groupDoc,
+      requestedAmount: Number(loanAmount || 0),
+      interestRate: interestRate == null || interestRate === '' ? 10 : Number(interestRate),
+    });
+
+    return res.json({
+      group: groupDoc._id,
+      client: {
+        _id: memberDoc._id,
+        memberName: memberDoc.memberName,
+        memberNumber: memberDoc.memberNumber,
+      },
+      eligibility,
+      defaults: {
+        interestRate: 10,
+      },
+    });
+  } catch (error) {
+    console.error('[LOANS] getLoanEligibility error', error);
+    return res.status(500).json({ message: 'Server error' });
+  }
+};
+
 const computeWeeklyInstallment = (loanAmount, interestRate, durationNumber, durationUnit) => {
   const weeks = toWeeks(durationNumber, durationUnit);
   const principal = Number(loanAmount || 0);
@@ -26,6 +80,35 @@ const computeWeeklyInstallment = (loanAmount, interestRate, durationNumber, dura
   if (!weeks || !principal) return undefined;
   const total = principal * (1 + rate / 100);
   return Math.round((total / weeks) * 100) / 100;
+};
+
+const round2 = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+
+const computeCreditEligibility = ({ memberDoc, groupDoc, requestedAmount, interestRate }) => {
+  const savingsTotal = Number(memberDoc?.savingsTotal || 0);
+  const totalShares = Number(memberDoc?.totalShares || 0);
+  const savingsAmountPerShare = Number(groupDoc?.savingsamount || 0);
+  const creditByShares = totalShares > 0 && savingsAmountPerShare > 0
+    ? totalShares * savingsAmountPerShare
+    : 0;
+  const creditLimit = Math.max(0, savingsTotal, creditByShares);
+
+  const requested = Number(requestedAmount || 0);
+  const resolvedRate = Number(interestRate || 10);
+  const interestAmount = requested > 0 && resolvedRate > 0
+    ? requested * (resolvedRate / 100)
+    : 0;
+
+  return {
+    savingsTotal: round2(savingsTotal),
+    totalShares: round2(totalShares),
+    savingsAmountPerShare: round2(savingsAmountPerShare),
+    creditByShares: round2(creditByShares),
+    creditLimit: round2(creditLimit),
+    requestedAmount: round2(requested),
+    interestRate: round2(resolvedRate),
+    interestAmount: round2(interestAmount),
+  };
 };
 
 exports.createLoan = async (req, res) => {
@@ -65,16 +148,15 @@ exports.createLoan = async (req, res) => {
       interestRate,
       currency,
       status,
-      loanOfficerName,
+      organizationName,
       guarantorInfo,
       treasuryInfo,
       secretaryInfo,
       groupHeadInfo,
-      loanOfficerInfo,
       branchManagerInfo,
     } = req.body;
 
-    if (!group || !client || !branchName || !branchCode || !guarantorName || !guarantorRelationship || !loanAmountInWords || !loanDurationNumber || !loanDurationUnit || !loanAmount || !interestRate || !loanOfficerName) {
+    if (!group || !client || !branchName || !branchCode || !guarantorName || !guarantorRelationship || !loanAmountInWords || loanDurationNumber == null || !loanDurationUnit || loanAmount == null) {
       return res.status(400).json({ message: 'Missing required loan fields' });
     }
 
@@ -96,11 +178,44 @@ exports.createLoan = async (req, res) => {
       return res.status(400).json({ message: 'Member does not belong to this group' });
     }
 
-    const computedWeekly = weeklyInstallment || computeWeeklyInstallment(loanAmount, interestRate, loanDurationNumber, loanDurationUnit);
+    const principalAmount = Number(loanAmount);
+    const resolvedInterestRate = interestRate == null || interestRate === ''
+      ? 10
+      : Number(interestRate);
+
+    if (!Number.isFinite(principalAmount) || principalAmount <= 0) {
+      return res.status(400).json({ message: 'loanAmount must be a positive number' });
+    }
+
+    if (!Number.isFinite(resolvedInterestRate) || resolvedInterestRate <= 0) {
+      return res.status(400).json({ message: 'interestRate must be a positive number' });
+    }
+
+    const eligibility = computeCreditEligibility({
+      memberDoc,
+      groupDoc,
+      requestedAmount: principalAmount,
+      interestRate: resolvedInterestRate,
+    });
+
+    if (eligibility.creditLimit <= 0) {
+      return res.status(400).json({ message: 'Member has no eligible credit based on current savings and shares' });
+    }
+
+    if (principalAmount > eligibility.creditLimit) {
+      return res.status(400).json({
+        message: `Requested credit exceeds member limit (${eligibility.creditLimit})`,
+        eligibility,
+      });
+    }
+
+    const computedWeekly = weeklyInstallment || computeWeeklyInstallment(principalAmount, resolvedInterestRate, loanDurationNumber, loanDurationUnit);
 
     const loan = await Loan.create({
       group: groupDoc._id,
       client: memberDoc._id,
+      organizationName: organizationName || groupDoc.organizationName,
+      processedByOrganization: true,
       branchName,
       branchCode,
       meetingTime,
@@ -129,20 +244,16 @@ exports.createLoan = async (req, res) => {
       maritalStatus,
       dependents,
       previousLoanSource,
-      loanAmount,
-      interestRate,
+      loanAmount: principalAmount,
+      interestRate: resolvedInterestRate,
       currency,
       status,
-      loanOfficerName,
       guarantorInfo,
       treasuryInfo,
       secretaryInfo,
       groupHeadInfo,
-      loanOfficerInfo,
       branchManagerInfo,
     });
-
-    await Group.findByIdAndUpdate(groupDoc._id, { $inc: { totalLoans: 1, ...(status === 'active' ? { groupTotalLoanAmount: Number(loanAmount || 0) } : {}) } });
 
     const populated = await Loan.findById(loan._id)
       .populate('group', 'groupName groupCode')
@@ -209,6 +320,9 @@ exports.updateLoan = async (req, res) => {
     const update = { ...req.body };
     delete update.group;
     delete update.client;
+    delete update.loanOfficerName;
+    delete update.loanOfficerInfo;
+    update.processedByOrganization = true;
 
     if (update.loanDurationNumber || update.loanDurationUnit || update.loanAmount || update.interestRate) {
       const loanDoc = await Loan.findById(id).select('loanAmount interestRate loanDurationNumber loanDurationUnit weeklyInstallment');
@@ -254,7 +368,6 @@ exports.setLoanStatus = async (req, res) => {
       return res.status(404).json({ message: 'Loan not found' });
     }
 
-    const wasActive = loan.status === 'active';
     loan.status = status;
 
     if (status === 'active' && !loan.disbursementDate) {
@@ -266,10 +379,6 @@ exports.setLoanStatus = async (req, res) => {
     }
 
     await loan.save();
-
-    if (!wasActive && status === 'active') {
-      await Group.findByIdAndUpdate(loan.group, { $inc: { groupTotalLoanAmount: Number(loan.loanAmount || 0) } });
-    }
 
     const populated = await Loan.findById(id)
       .populate('group', 'groupName groupCode')

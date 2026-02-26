@@ -17,6 +17,8 @@ const memberSchema = new mongoose.Schema({
   memberSignature: { type: String },
   attendance: [attendanceSchema],
   savingsTotal: { type: Number, default: 0 },
+  totalShares: { type: Number, default: 0 },
+  interestEarnedTotal: { type: Number, default: 0 },
   socialFundTotal: { type: Number, default: 0 },
   group: { type: mongoose.Schema.Types.ObjectId, ref: 'Group', required: true },
 }, { timestamps: true });

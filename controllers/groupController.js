@@ -18,17 +18,44 @@ const generateGroupCode = async (groupName) => {
   return `${base}-${Date.now().toString().slice(-6)}`;
 };
 
+const toNumber = (value) => {
+  if (value === '' || value == null) return undefined;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : undefined;
+};
+
 exports.createGroup = async (req, res) => {
   try {
     const {
       groupName,
       groupCode,
       branchName,
+      organizationName,
       meetingDay,
       meetingTime,
       loanOfficer,
       community,
       totalGroupCount,
+      chairpersonName,
+      chairpersonNumber,
+      recordKeeperName,
+      recordKeeperNumber,
+      boxKeeperName,
+      boxKeeperNumber,
+      moneyCounterOneName,
+      moneyCounterOneNumber,
+      moneyCounterTwoName,
+      moneyCounterTwoNumber,
+      keyholderOneName,
+      keyholderOneNumber,
+      keyholderTwoName,
+      keyholderTwoNumber,
+      keyholderThreeName,
+      keyholderThreeNumber,
+      policeOneName,
+      policeOneNumber,
+      policeTwoName,
+      policeTwoNumber,
       presidentName,
       presidentNumber,
       securityName,
@@ -44,6 +71,12 @@ exports.createGroup = async (req, res) => {
       totalsocialfund,
       groupsavings,
       membersavingsshare,
+      totalShares,
+      savingsDurationMonths,
+      totalExpenses,
+      totalFines,
+      savingsamount,
+      meetingFineAmount,
     } = req.body;
 
     if (!groupName || !branchName) {
@@ -56,30 +89,63 @@ exports.createGroup = async (req, res) => {
       return res.status(400).json({ message: 'Group with this code already exists' });
     }
 
+    const leadership = {
+      chairpersonName: chairpersonName || presidentName,
+      chairpersonNumber: chairpersonNumber || presidentNumber,
+      recordKeeperName: recordKeeperName || securityName,
+      recordKeeperNumber: recordKeeperNumber || securityNumber,
+      boxKeeperName: boxKeeperName || treasurerName,
+      boxKeeperNumber: boxKeeperNumber || treasurerNumber,
+      moneyCounterOneName,
+      moneyCounterOneNumber,
+      moneyCounterTwoName,
+      moneyCounterTwoNumber,
+      keyholderOneName,
+      keyholderOneNumber,
+      keyholderTwoName,
+      keyholderTwoNumber,
+      keyholderThreeName,
+      keyholderThreeNumber,
+      policeOneName: policeOneName || police1Name,
+      policeOneNumber: policeOneNumber || police1Number,
+      policeTwoName: policeTwoName || police2Name,
+      policeTwoNumber: policeTwoNumber || police2Number,
+    };
+
     const group = await Group.create({
       groupName,
       groupCode: resolvedCode,
       branchName,
+      organizationName,
       meetingDay,
       meetingTime,
       loanOfficer,
       community,
-      totalGroupCount,
-      presidentName,
-      presidentNumber,
-      securityName,
-      securityNumber,
-      treasurerName,
-      treasurerNumber,
-      police1Name,
-      police1Number,
-      police2Name,
-      police2Number,
+      totalGroupCount: toNumber(totalGroupCount),
+      ...leadership,
+
+      // Backward-compatible aliases used by existing screens/data.
+      presidentName: leadership.chairpersonName,
+      presidentNumber: leadership.chairpersonNumber,
+      securityName: leadership.recordKeeperName,
+      securityNumber: leadership.recordKeeperNumber,
+      treasurerName: leadership.boxKeeperName,
+      treasurerNumber: leadership.boxKeeperNumber,
+      police1Name: leadership.policeOneName,
+      police1Number: leadership.policeOneNumber,
+      police2Name: leadership.policeTwoName,
+      police2Number: leadership.policeTwoNumber,
       status,
-      socialfundamount,
-      totalsocialfund,
-      groupsavings,
-      membersavingsshare,
+      socialfundamount: toNumber(socialfundamount),
+      totalsocialfund: toNumber(totalsocialfund),
+      groupsavings: toNumber(groupsavings),
+      membersavingsshare: toNumber(membersavingsshare),
+      totalShares: toNumber(totalShares),
+      savingsDurationMonths: toNumber(savingsDurationMonths),
+      totalExpenses: toNumber(totalExpenses),
+      totalFines: toNumber(totalFines),
+      savingsamount: toNumber(savingsamount),
+      meetingFineAmount: toNumber(meetingFineAmount),
     });
 
     return res.status(201).json(group);
@@ -138,6 +204,28 @@ exports.updateGroup = async (req, res) => {
 
     const update = { ...req.body };
     delete update.groupCode;
+
+    if (update.presidentName && !update.chairpersonName) update.chairpersonName = update.presidentName;
+    if (update.presidentNumber && !update.chairpersonNumber) update.chairpersonNumber = update.presidentNumber;
+    if (update.securityName && !update.recordKeeperName) update.recordKeeperName = update.securityName;
+    if (update.securityNumber && !update.recordKeeperNumber) update.recordKeeperNumber = update.securityNumber;
+    if (update.treasurerName && !update.boxKeeperName) update.boxKeeperName = update.treasurerName;
+    if (update.treasurerNumber && !update.boxKeeperNumber) update.boxKeeperNumber = update.treasurerNumber;
+    if (update.police1Name && !update.policeOneName) update.policeOneName = update.police1Name;
+    if (update.police1Number && !update.policeOneNumber) update.policeOneNumber = update.police1Number;
+    if (update.police2Name && !update.policeTwoName) update.policeTwoName = update.police2Name;
+    if (update.police2Number && !update.policeTwoNumber) update.policeTwoNumber = update.police2Number;
+
+    if (update.chairpersonName) update.presidentName = update.chairpersonName;
+    if (update.chairpersonNumber) update.presidentNumber = update.chairpersonNumber;
+    if (update.recordKeeperName) update.securityName = update.recordKeeperName;
+    if (update.recordKeeperNumber) update.securityNumber = update.recordKeeperNumber;
+    if (update.boxKeeperName) update.treasurerName = update.boxKeeperName;
+    if (update.boxKeeperNumber) update.treasurerNumber = update.boxKeeperNumber;
+    if (update.policeOneName) update.police1Name = update.policeOneName;
+    if (update.policeOneNumber) update.police1Number = update.policeOneNumber;
+    if (update.policeTwoName) update.police2Name = update.policeTwoName;
+    if (update.policeTwoNumber) update.police2Number = update.policeTwoNumber;
 
     const group = await Group.findByIdAndUpdate(id, update, { new: true, runValidators: true });
     if (!group) {

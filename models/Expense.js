@@ -1,15 +1,15 @@
 const mongoose = require('mongoose');
 
-const savingsSchema = new mongoose.Schema({
+const expenseSchema = new mongoose.Schema({
   group: { type: mongoose.Schema.Types.ObjectId, ref: 'Group', required: true },
-  member: { type: mongoose.Schema.Types.ObjectId, ref: 'Member', required: true },
+  member: { type: mongoose.Schema.Types.ObjectId, ref: 'Member' },
   memberName: { type: String, trim: true },
+  type: { type: String, enum: ['expense', 'fine'], default: 'expense' },
+  category: { type: String, trim: true },
   amount: { type: Number, required: true, min: 0 },
-  shares: { type: Number, default: 0, min: 0 },
-  transactionType: { type: String, enum: ['credit', 'debit'], default: 'credit' },
   currency: { type: String, enum: ['USD', 'LRD'], required: true },
   date: { type: Date, default: Date.now },
   notes: { type: String, trim: true },
 }, { timestamps: true });
 
-module.exports = mongoose.model('Savings', savingsSchema);
+module.exports = mongoose.model('Expense', expenseSchema);
