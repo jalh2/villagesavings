@@ -23,6 +23,10 @@ const toNumber = (value) => {
   return Number.isFinite(num) ? num : undefined;
 };
 
+const toCurrency = (value, fallback = 'LRD') => {
+  return value === 'USD' ? 'USD' : fallback;
+};
+
 exports.createGroup = async (req, res) => {
   try {
     const {
@@ -75,7 +79,9 @@ exports.createGroup = async (req, res) => {
       totalExpenses,
       totalFines,
       savingsamount,
+      savingsamountcurrency,
       meetingFineAmount,
+      socialfundamountcurrency,
     } = req.body;
 
     const existingGroup = await Group.findOne().select('_id groupName');
@@ -145,6 +151,7 @@ exports.createGroup = async (req, res) => {
       police2Number: leadership.policeTwoNumber,
       status,
       socialfundamount: toNumber(socialfundamount),
+      socialfundamountcurrency: toCurrency(socialfundamountcurrency),
       totalsocialfund: toNumber(totalsocialfund),
       groupsavings: toNumber(groupsavings),
       membersavingsshare: toNumber(membersavingsshare),
@@ -153,6 +160,7 @@ exports.createGroup = async (req, res) => {
       totalExpenses: toNumber(totalExpenses),
       totalFines: toNumber(totalFines),
       savingsamount: toNumber(savingsamount),
+      savingsamountcurrency: toCurrency(savingsamountcurrency),
       meetingFineAmount: toNumber(meetingFineAmount),
     });
 
@@ -239,6 +247,13 @@ exports.updateGroup = async (req, res) => {
     if (update.policeOneNumber) update.police1Number = update.policeOneNumber;
     if (update.policeTwoName) update.police2Name = update.policeTwoName;
     if (update.policeTwoNumber) update.police2Number = update.policeTwoNumber;
+
+    if (Object.prototype.hasOwnProperty.call(update, 'savingsamountcurrency')) {
+      update.savingsamountcurrency = toCurrency(update.savingsamountcurrency);
+    }
+    if (Object.prototype.hasOwnProperty.call(update, 'socialfundamountcurrency')) {
+      update.socialfundamountcurrency = toCurrency(update.socialfundamountcurrency);
+    }
 
     const group = await Group.findByIdAndUpdate(resolved.group._id, update, { new: true, runValidators: true });
     if (!group) {
