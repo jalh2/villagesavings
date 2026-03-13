@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const groupSchema = new mongoose.Schema({
   groupName: { type: String, required: true, trim: true },
   groupCode: { type: String, required: true, unique: true, trim: true },
-  branchName: { type: String, required: true, trim: true },
+  branchName: { type: String, trim: true },
   organizationName: { type: String, trim: true },
   members: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Member' }],
   leader: { type: mongoose.Schema.Types.ObjectId, ref: 'Member' },

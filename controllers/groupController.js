@@ -87,8 +87,8 @@ exports.createGroup = async (req, res) => {
       });
     }
 
-    if (!groupName || !branchName) {
-      return res.status(400).json({ message: 'groupName and branchName are required' });
+    if (!groupName) {
+      return res.status(400).json({ message: 'groupName is required' });
     }
 
     const resolvedCode = groupCode || await generateGroupCode(groupName);
