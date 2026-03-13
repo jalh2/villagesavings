@@ -48,7 +48,7 @@ exports.getLoanEligibility = async (req, res) => {
       return res.status(400).json({ message: 'Member does not belong to this group' });
     }
 
-    const eligibility = computeCreditEligibility({
+    const eligibility = computeLoanEligibility({
       memberDoc,
       groupDoc,
       requestedAmount: Number(loanAmount || 0),
@@ -83,15 +83,15 @@ const computeWeeklyInstallment = (loanAmount, interestRate, durationNumber, dura
 };
 
 const round2 = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+const LOAN_MULTIPLIER = 3;
 
-const computeCreditEligibility = ({ memberDoc, groupDoc, requestedAmount, interestRate }) => {
+const computeLoanEligibility = ({ memberDoc, groupDoc, requestedAmount, interestRate }) => {
   const savingsTotal = Number(memberDoc?.savingsTotal || 0);
   const totalShares = Number(memberDoc?.totalShares || 0);
   const savingsAmountPerShare = Number(groupDoc?.savingsamount || 0);
-  const creditByShares = totalShares > 0 && savingsAmountPerShare > 0
-    ? totalShares * savingsAmountPerShare
-    : 0;
-  const creditLimit = Math.max(0, savingsTotal, creditByShares);
+  const contributedSavings = Math.max(0, savingsTotal);
+  const eligibleSavingsBase = contributedSavings;
+  const loanLimit = eligibleSavingsBase * LOAN_MULTIPLIER;
 
   const requested = Number(requestedAmount || 0);
   const resolvedRate = Number(interestRate || 10);
@@ -103,8 +103,10 @@ const computeCreditEligibility = ({ memberDoc, groupDoc, requestedAmount, intere
     savingsTotal: round2(savingsTotal),
     totalShares: round2(totalShares),
     savingsAmountPerShare: round2(savingsAmountPerShare),
-    creditByShares: round2(creditByShares),
-    creditLimit: round2(creditLimit),
+    contributedSavings: round2(contributedSavings),
+    eligibleSavingsBase: round2(eligibleSavingsBase),
+    loanMultiplier: LOAN_MULTIPLIER,
+    loanLimit: round2(loanLimit),
     requestedAmount: round2(requested),
     interestRate: round2(resolvedRate),
     interestAmount: round2(interestAmount),
@@ -192,20 +194,20 @@ exports.createLoan = async (req, res) => {
       return res.status(400).json({ message: 'interestRate must be a positive number' });
     }
 
-    const eligibility = computeCreditEligibility({
+    const eligibility = computeLoanEligibility({
       memberDoc,
       groupDoc,
       requestedAmount: principalAmount,
       interestRate: resolvedInterestRate,
     });
 
-    if (eligibility.creditLimit <= 0) {
-      return res.status(400).json({ message: 'Member has no eligible credit based on current savings and shares' });
+    if (eligibility.loanLimit <= 0) {
+      return res.status(400).json({ message: 'Member has no available loan amount based on current savings and shares' });
     }
 
-    if (principalAmount > eligibility.creditLimit) {
+    if (principalAmount > eligibility.loanLimit) {
       return res.status(400).json({
-        message: `Requested credit exceeds member limit (${eligibility.creditLimit})`,
+        message: `Requested loan exceeds member limit (${eligibility.loanLimit})`,
         eligibility,
       });
     }

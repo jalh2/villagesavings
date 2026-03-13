@@ -1,11 +1,14 @@
 const express = require('express');
 const {
   createSocialFund,
+  createBulkSocialFunds,
   getSocialFunds,
   getSocialFundById,
 } = require('../controllers/socialFundController');
 
 const router = express.Router();
+
+router.post('/bulk', createBulkSocialFunds);
 
 router.route('/')
   .get(getSocialFunds)
