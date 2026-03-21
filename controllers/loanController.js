@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const Loan = require('../models/Loan');
+const Distribution = require('../models/Distribution');
 const Member = require('../models/Member');
 const { resolveSingleGroup } = require('../utils/singleGroup');
 
@@ -17,6 +18,130 @@ const toWeeks = (n, unit) => {
     default:
       return num;
   }
+};
+
+const round2 = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+const LOAN_MULTIPLIER = 3;
+const OVERDUE_INTEREST_RATE = 5;
+
+const toDate = (value) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const addDuration = (date, amount, unit) => {
+  const baseDate = toDate(date);
+  const durationAmount = Number(amount || 0);
+  if (!baseDate || !durationAmount) return null;
+
+  const nextDate = new Date(baseDate);
+  switch (String(unit || '').toLowerCase()) {
+    case 'days':
+      nextDate.setDate(nextDate.getDate() + durationAmount);
+      break;
+    case 'weeks':
+      nextDate.setDate(nextDate.getDate() + (durationAmount * 7));
+      break;
+    case 'months':
+      nextDate.setMonth(nextDate.getMonth() + durationAmount);
+      break;
+    case 'years':
+      nextDate.setFullYear(nextDate.getFullYear() + durationAmount);
+      break;
+    default:
+      return null;
+  }
+
+  return nextDate;
+};
+
+const computeBaseTotalRepayable = (loanAmount, interestRate) => {
+  const principal = Number(loanAmount || 0);
+  const rate = Number(interestRate || 0);
+  return round2(principal * (1 + (rate / 100)));
+};
+
+const getSortedCollections = (loan) => {
+  const collections = Array.isArray(loan?.collections) ? [...loan.collections] : [];
+  return collections.sort((a, b) => new Date(a?.collectionDate || 0) - new Date(b?.collectionDate || 0));
+};
+
+const getLoanDueDate = (loan) => {
+  const startDate = toDate(loan?.disbursementDate || loan?.createdAt);
+  if (!startDate) return null;
+  return addDuration(startDate, loan?.loanDurationNumber, loan?.loanDurationUnit);
+};
+
+const wasLoanPaidByDueDate = (collections, dueDate, baseTotalRepayable) => {
+  if (!dueDate || !baseTotalRepayable) return false;
+
+  let realizedByDueDate = 0;
+  for (const entry of collections) {
+    const collectionDate = toDate(entry?.collectionDate);
+    if (!collectionDate || collectionDate > dueDate) {
+      continue;
+    }
+
+    realizedByDueDate += Number(entry?.fieldCollection || 0);
+    if (round2(realizedByDueDate) >= baseTotalRepayable) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+const computeLoanFinancials = (loan, options = {}) => {
+  const principalAmount = Number(loan?.loanAmount || 0);
+  const baseInterestRate = Number(loan?.interestRate || 0);
+  const baseInterestAmount = round2(principalAmount * (baseInterestRate / 100));
+  const baseTotalRepayable = computeBaseTotalRepayable(principalAmount, baseInterestRate);
+  const dueDate = getLoanDueDate(loan);
+  const collections = getSortedCollections(loan);
+  const totalRealization = round2(collections.reduce((sum, item) => sum + Number(item?.fieldCollection || 0), 0));
+  const referenceDate = toDate(options.referenceDate) || new Date();
+  const penaltyApplies = Boolean(
+    dueDate
+    && referenceDate > dueDate
+    && !wasLoanPaidByDueDate(collections, dueDate, baseTotalRepayable)
+  );
+  const overdueInterestAmount = penaltyApplies
+    ? round2(principalAmount * (OVERDUE_INTEREST_RATE / 100))
+    : 0;
+  const totalRepayable = round2(baseTotalRepayable + overdueInterestAmount);
+  const remainingBalance = Math.max(0, round2(totalRepayable - totalRealization));
+
+  return {
+    principalAmount: round2(principalAmount),
+    baseInterestRate: round2(baseInterestRate),
+    baseInterestAmount,
+    overdueInterestRate: penaltyApplies ? OVERDUE_INTEREST_RATE : 0,
+    overdueInterestAmount,
+    appliedInterestRate: round2(baseInterestRate + (penaltyApplies ? OVERDUE_INTEREST_RATE : 0)),
+    baseTotalRepayable,
+    totalRepayable,
+    totalRealization,
+    remainingBalance,
+    dueDate,
+    penaltyApplied: penaltyApplies,
+    isOverdue: Boolean(dueDate && referenceDate > dueDate && remainingBalance > 0),
+  };
+};
+
+const serializeLoan = (loan, options = {}) => {
+  if (!loan) return loan;
+
+  const plainLoan = typeof loan.toObject === 'function'
+    ? loan.toObject()
+    : { ...loan };
+  const financials = computeLoanFinancials(plainLoan, options);
+
+  return {
+    ...plainLoan,
+    totalRealization: financials.totalRealization,
+    financials,
+  };
 };
 
 exports.getLoanEligibility = async (req, res) => {
@@ -82,8 +207,23 @@ const computeWeeklyInstallment = (loanAmount, interestRate, durationNumber, dura
   return Math.round((total / weeks) * 100) / 100;
 };
 
-const round2 = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
-const LOAN_MULTIPLIER = 3;
+const deriveAutomaticLoanStatus = (loan, options = {}) => {
+  const financials = computeLoanFinancials(loan, options);
+
+  if (financials.totalRepayable > 0 && financials.remainingBalance <= 0) {
+    return 'paid';
+  }
+
+  if (loan?.status === 'denied') {
+    return 'denied';
+  }
+
+  if (loan?.status === 'defaulted') {
+    return 'defaulted';
+  }
+
+  return 'active';
+};
 
 const computeLoanEligibility = ({ memberDoc, groupDoc, requestedAmount, interestRate }) => {
   const savingsTotal = Number(memberDoc?.savingsTotal || 0);
@@ -132,7 +272,6 @@ exports.createLoan = async (req, res) => {
       loanDurationUnit,
       purposeOfLoan,
       businessType,
-      disbursementDate,
       endingDate,
       collectionStartDate,
       previousLoanInfo,
@@ -150,6 +289,7 @@ exports.createLoan = async (req, res) => {
       interestRate,
       currency,
       status,
+      disbursementDate,
       organizationName,
       guarantorInfo,
       treasuryInfo,
@@ -213,6 +353,8 @@ exports.createLoan = async (req, res) => {
     }
 
     const computedWeekly = weeklyInstallment || computeWeeklyInstallment(principalAmount, resolvedInterestRate, loanDurationNumber, loanDurationUnit);
+    const effectiveStatus = status || 'active';
+    const effectiveDisbursementDate = disbursementDate ? new Date(disbursementDate) : new Date();
 
     const loan = await Loan.create({
       group: groupDoc._id,
@@ -250,7 +392,8 @@ exports.createLoan = async (req, res) => {
       loanAmount: principalAmount,
       interestRate: resolvedInterestRate,
       currency,
-      status,
+      status: effectiveStatus,
+      disbursementDate: effectiveDisbursementDate,
       guarantorInfo,
       treasuryInfo,
       secretaryInfo,
@@ -258,11 +401,22 @@ exports.createLoan = async (req, res) => {
       branchManagerInfo,
     });
 
+    await Distribution.create({
+      loan: loan._id,
+      group: groupDoc._id,
+      member: memberDoc._id,
+      memberName: memberDoc.memberName,
+      amount: principalAmount,
+      currency,
+      date: effectiveDisbursementDate,
+      notes: 'Auto-recorded on loan creation',
+    });
+
     const populated = await Loan.findById(loan._id)
       .populate('group', 'groupName groupCode')
       .populate('client', 'memberName memberNumber');
 
-    return res.status(201).json(populated);
+    return res.status(201).json(serializeLoan(populated));
   } catch (error) {
     console.error('[LOANS] createLoan error', error);
     return res.status(500).json({ message: 'Server error' });
@@ -290,7 +444,7 @@ exports.getAllLoans = async (req, res) => {
       .populate('group', 'groupName groupCode')
       .populate('client', 'memberName memberNumber');
 
-    return res.json(loans);
+    return res.json(loans.map((loan) => serializeLoan(loan)));
   } catch (error) {
     console.error('[LOANS] getAllLoans error', error);
     return res.status(500).json({ message: 'Server error' });
@@ -317,7 +471,7 @@ exports.getLoanById = async (req, res) => {
       return res.status(404).json({ message: 'Loan not found' });
     }
 
-    return res.json(loan);
+    return res.json(serializeLoan(loan));
   } catch (error) {
     console.error('[LOANS] getLoanById error', error);
     return res.status(500).json({ message: 'Server error' });
@@ -367,7 +521,7 @@ exports.updateLoan = async (req, res) => {
       return res.status(404).json({ message: 'Loan not found' });
     }
 
-    return res.json(loan);
+    return res.json(serializeLoan(loan));
   } catch (error) {
     console.error('[LOANS] updateLoan error', error);
     return res.status(500).json({ message: 'Server error' });
@@ -413,7 +567,7 @@ exports.setLoanStatus = async (req, res) => {
       .populate('group', 'groupName groupCode')
       .populate('client', 'memberName memberNumber');
 
-    return res.json(populated);
+    return res.json(serializeLoan(populated));
   } catch (error) {
     console.error('[LOANS] setLoanStatus error', error);
     return res.status(500).json({ message: 'Server error' });
@@ -433,7 +587,6 @@ exports.addCollection = async (req, res) => {
       weeklyAmount,
       fieldCollection,
       advancePayment,
-      fieldBalance,
       currency,
       collectionDate,
       principalPortion,
@@ -442,7 +595,7 @@ exports.addCollection = async (req, res) => {
       securityDepositContribution,
     } = req.body;
 
-    if (!memberName || !loanAmount || !weeklyAmount || fieldCollection == null || fieldBalance == null || !currency) {
+    if (!memberName || !loanAmount || !weeklyAmount || fieldCollection == null || !currency) {
       return res.status(400).json({ message: 'Missing required collection fields' });
     }
 
@@ -456,23 +609,44 @@ exports.addCollection = async (req, res) => {
       return res.status(404).json({ message: 'Loan not found' });
     }
 
+    const entryDate = collectionDate ? new Date(collectionDate) : new Date();
     const entry = {
       memberName,
       loanAmount,
       weeklyAmount,
       fieldCollection,
       advancePayment: advancePayment || 0,
-      fieldBalance,
       currency,
-      collectionDate: collectionDate ? new Date(collectionDate) : new Date(),
+      collectionDate: entryDate,
       principalPortion,
       interestPortion,
       feesPortion,
       securityDepositContribution,
     };
 
+    const nextCollections = [...(loan.collections || []), entry];
+    const financials = computeLoanFinancials({
+      ...loan.toObject(),
+      collections: nextCollections,
+    }, {
+      referenceDate: entryDate,
+    });
+
+    entry.fieldBalance = financials.remainingBalance;
+
     loan.collections.push(entry);
-    loan.totalRealization = loan.collections.reduce((sum, item) => sum + Number(item.fieldCollection || 0), 0);
+    loan.totalRealization = financials.totalRealization;
+    loan.status = deriveAutomaticLoanStatus({
+      ...loan.toObject(),
+      collections: loan.collections,
+      totalRealization: loan.totalRealization,
+    }, {
+      referenceDate: entryDate,
+    });
+
+    if (loan.status === 'active' && !loan.disbursementDate) {
+      loan.disbursementDate = new Date();
+    }
 
     await loan.save();
 

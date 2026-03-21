@@ -52,6 +52,7 @@ const groupSchema = new mongoose.Schema({
   totalExpenses: { type: Number, default: 0 },
   totalFines: { type: Number, default: 0 },
   meetingFineAmount: { type: Number, default: 0 },
+  registrationFee: { type: Number, default: 0 },
   savingsamount: { type: Number, default: 0 },
   savingsamountcurrency: { type: String, enum: ['LRD', 'USD'], default: 'LRD' },
   socialfundamount: { type: Number, default: 0 },

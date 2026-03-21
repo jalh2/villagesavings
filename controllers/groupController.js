@@ -82,6 +82,7 @@ exports.createGroup = async (req, res) => {
       savingsamountcurrency,
       meetingFineAmount,
       socialfundamountcurrency,
+      registrationFee,
     } = req.body;
 
     const existingGroup = await Group.findOne().select('_id groupName');
@@ -162,6 +163,7 @@ exports.createGroup = async (req, res) => {
       savingsamount: toNumber(savingsamount),
       savingsamountcurrency: toCurrency(savingsamountcurrency),
       meetingFineAmount: toNumber(meetingFineAmount),
+      registrationFee: toNumber(registrationFee),
     });
 
     return res.status(201).json(group);

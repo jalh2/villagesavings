@@ -132,6 +132,105 @@ exports.createSavings = async (req, res) => {
   }
 };
 
+exports.createBulkSavings = async (req, res) => {
+  try {
+    const { group, currency, date, notes, entries } = req.body;
+
+    if (!Array.isArray(entries) || entries.length === 0) {
+      return res.status(400).json({ message: 'entries must be a non-empty array' });
+    }
+
+    if (!currency) {
+      return res.status(400).json({ message: 'currency is required' });
+    }
+
+    const resolved = await resolveSingleGroup(group, '_id savingsamount');
+    if (resolved.error) {
+      return res.status(resolved.error.status).json({ message: resolved.error.message });
+    }
+    const groupDoc = resolved.group;
+
+    const savingsUnitAmount = toNumber(groupDoc.savingsamount, 0);
+    if (!Number.isFinite(savingsUnitAmount) || savingsUnitAmount <= 0) {
+      return res.status(400).json({ message: 'Group savings amount per share is not configured' });
+    }
+
+    const validEntries = entries.filter((e) => toNumber(e?.shares, 0) > 0);
+    if (validEntries.length === 0) {
+      return res.status(400).json({ message: 'Provide at least one entry with shares greater than zero' });
+    }
+
+    const savingsDocs = [];
+    const memberUpdates = [];
+    let totalAmountDelta = 0;
+    let totalSharesDelta = 0;
+
+    for (const entry of validEntries) {
+      const memberId = entry.member;
+      if (!memberId || !mongoose.isValidObjectId(memberId)) {
+        return res.status(400).json({ message: `Invalid member id: ${memberId}` });
+      }
+
+      const memberDoc = await Member.findById(memberId).select('group memberName');
+      if (!memberDoc) {
+        return res.status(404).json({ message: `Member not found: ${memberId}` });
+      }
+      if (String(memberDoc.group) !== String(groupDoc._id)) {
+        return res.status(400).json({ message: `Member ${memberDoc.memberName} does not belong to this group` });
+      }
+
+      const sharesNum = toNumber(entry.shares, 0);
+      if (!Number.isInteger(sharesNum) || sharesNum <= 0) {
+        return res.status(400).json({ message: 'shares must be a positive whole number' });
+      }
+
+      const amountNum = sharesNum * savingsUnitAmount;
+
+      savingsDocs.push({
+        group: groupDoc._id,
+        member: memberId,
+        memberName: entry.memberName || memberDoc.memberName,
+        amount: amountNum,
+        shares: sharesNum,
+        transactionType: 'credit',
+        currency,
+        date: date ? new Date(date) : new Date(),
+        notes: entry.notes || notes,
+      });
+
+      totalAmountDelta += amountNum;
+      totalSharesDelta += sharesNum;
+
+      memberUpdates.push(
+        Member.findByIdAndUpdate(memberId, {
+          $inc: { savingsTotal: amountNum, totalShares: sharesNum },
+        })
+      );
+    }
+
+    const created = await Savings.insertMany(savingsDocs);
+
+    await Promise.all([
+      Group.findByIdAndUpdate(groupDoc._id, {
+        $inc: {
+          groupsavings: totalAmountDelta,
+          totalShares: totalSharesDelta,
+          membersavingsshare: totalSharesDelta,
+        },
+      }),
+      ...memberUpdates,
+    ]);
+
+    return res.status(201).json({
+      count: created.length,
+      savings: created,
+    });
+  } catch (error) {
+    console.error('[SAVINGS] createBulkSavings error', error);
+    return res.status(500).json({ message: 'Server error' });
+  }
+};
+
 exports.getSavings = async (req, res) => {
   try {
     const { group, member } = req.query;
